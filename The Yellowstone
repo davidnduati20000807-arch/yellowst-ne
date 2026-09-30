@@ -1,0 +1,211 @@
+// Forex Practice: one Cloudflare Worker that serves the app and a cached price API.
+// Setup: add a secret named TD_KEY (your Twelve Data API key) in the Worker's settings.
+
+const HTML = String.raw`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Forex Practice</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#14213d">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#14213d;--mute:#5d6b82;--line:#d9e0ea;--buy:#1f6feb;--sell:#e4761b;--up:#14936b;--down:#d03b4f;--chart:#1f6feb;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1724;--card:#182235;--ink:#e8eef8;--mute:#93a2bb;--line:#2a3750;--buy:#4c8dff;--sell:#f29040;--up:#3cc79a;--down:#ff6b7d;--chart:#4c8dff}}
+:root[data-theme="dark"]{--bg:#0f1724;--card:#182235;--ink:#e8eef8;--mute:#93a2bb;--line:#2a3750;--buy:#4c8dff;--sell:#f29040;--up:#3cc79a;--down:#ff6b7d;--chart:#4c8dff}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Figtree,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;line-height:1.45}
+main{max-width:480px;margin:0 auto;padding:12px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+h1{font-size:17px;margin:0;font-weight:800}
+.badge{font-size:11px;color:var(--mute);border:1px solid var(--line);border-radius:99px;padding:2px 9px;background:var(--card)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+.stats b{display:block;font-size:16px}.stats span{font-size:12px;color:var(--mute)}
+.pairs{display:flex;gap:6px;overflow-x:auto;margin-bottom:10px}
+.pairs button{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:6px 12px;font:inherit;font-weight:600}
+.pairs button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.quote{display:flex;justify-content:space-between;align-items:baseline}
+.quote .p{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.up{color:var(--up)}.down{color:var(--down)}
+canvas{width:100%;height:170px;display:block;margin-top:6px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+label{font-size:12px;color:var(--mute);display:block}
+input{width:100%;font:inherit;padding:9px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+.go{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.go button{border:0;border-radius:12px;padding:12px 6px;font:inherit;font-weight:800;color:#fff;cursor:pointer}
+.go small{display:block;font-weight:400;font-variant-numeric:tabular-nums}
+.b{background:var(--buy)}.s{background:var(--sell)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--buy);outline-offset:2px}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tabs button{flex:1;padding:8px 2px;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;font:inherit;font-weight:600}
+.tabs button[aria-selected="true"]{background:var(--ink);color:var(--bg)}
+.pos{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.pos:first-child{border-top:0}
+.pos small{color:var(--mute);display:block}
+.pos button{border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;padding:5px 10px;font:inherit}
+.msg{min-height:18px;font-size:13px;color:var(--down);margin-top:6px}
+.empty{color:var(--mute);margin:4px 0}
+details{border-top:1px solid var(--line);padding:8px 0}details:first-child{border-top:0}
+summary{font-weight:600;cursor:pointer}
+details p{margin:6px 0 0;color:var(--mute)}
+.tf{display:flex;gap:6px;margin-top:6px}.tf button{border:1px solid var(--line);background:none;color:var(--mute);border-radius:8px;padding:3px 10px;font:inherit;font-size:13px}.tf button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink);font-weight:600}.closeall{width:100%;margin-top:8px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:10px;padding:8px;font:inherit}
+.bt{display:flex;gap:6px}.ed{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 0 10px}.ed button{border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;padding:7px;font:inherit}#rsi{margin-left:auto;font-size:13px;color:var(--mute);align-self:center}
+#toast{display:none;position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 8px);max-width:456px;margin:0 auto;background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:12px;font-weight:600;z-index:9}
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><h1>Forex Practice</h1><span class="badge">Practice account · virtual funds</span></div>
+  <div class="card stats">
+    <div><b id="bal">$0</b><span>Balance</span></div>
+    <div><b id="eq">$0</b><span>Equity</span></div>
+    <div><b id="pl">$0</b><span>Open P/L</span></div>
+    <div><b id="mu">$0</b><span>Margin used</span></div>
+    <div><b id="fm">$0</b><span>Free margin</span></div>
+    <div><b id="ml">–</b><span>Margin level</span></div>
+  </div>
+  <div class="pairs" id="pairs"></div>
+  <div class="card">
+    <div class="quote"><span class="p" id="mid">–</span><span id="chg"></span></div>
+    <div class="tf" id="tf"><button data-n="67" aria-pressed="true">1m</button><button data-n="200" aria-pressed="false">3m</button><button data-n="333" aria-pressed="false">5m</button><button id="sma" aria-pressed="true">SMA 20</button><span id="rsi"></span></div>
+    <canvas id="c"></canvas>
+  </div>
+  <div class="card">
+    <div class="row">
+      <div><label for="lots">Lot size</label><input id="lots" type="number" step="0.01" min="0.01" max="5" value="0.10" inputmode="decimal"></div>
+      <div><label for="sl">Stop-loss (pips)</label><input id="sl" type="number" min="1" placeholder="Optional" inputmode="numeric"></div>
+      <div><label for="tp">Take-profit (pips)</label><input id="tp" type="number" min="1" placeholder="Optional" inputmode="numeric"></div>
+      <div><label for="pr">Entry price (optional)</label><input id="pr" type="number" step="any" placeholder="Market" inputmode="decimal"></div>
+      <div><label>Margin needed</label><input id="mg" disabled></div>
+    </div>
+    <div class="go">
+      <button class="s" id="sell">Sell<small id="bid"></small></button>
+      <button class="b" id="buy">Buy<small id="ask"></small></button>
+    </div>
+    <div class="msg" id="msg" role="status"></div>
+  </div>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-t="open">Open</button>
+    <button role="tab" aria-selected="false" data-t="hist">History</button>
+    <button role="tab" aria-selected="false" data-t="tools">Tools</button>
+    <button role="tab" aria-selected="false" data-t="learn">Learn</button>
+  </div>
+  <div class="card" id="panel"></div>
+</main>
+<div id="toast" role="status"></div>
+<script>
+var PAIRS={"EUR/USD":{p:1.0850,pip:.0001,d:5},"GBP/USD":{p:1.2900,pip:.0001,d:5},"USD/JPY":{p:149.50,pip:.01,d:3},"USD/KES":{p:129.20,pip:.01,d:2},"AUD/USD":{p:.6600,pip:.0001,d:5},"USD/CAD":{p:1.3600,pip:.0001,d:5},"USD/CHF":{p:.8800,pip:.0001,d:5},"EUR/JPY":{p:162.20,pip:.01,d:3}};
+var FEED_URL="/api/price",target={},feedErr=false,SPREAD=1.2,pairSel="EUR/USD",tab="open",bal=10000,open=[],pend=[],alerts=[],lines=[],closed=[],nid=1,hist={},start={};
+Object.keys(PAIRS).forEach(function(k){hist[k]=[];var x=PAIRS[k].p;for(var i=0;i<3000;i++){x+=(Math.random()-.5)*PAIRS[k].pip*3;hist[k].push(x)}start[k]=hist[k][0]});
+function $(i){return document.getElementById(i)}
+function mid(k){var h=hist[k];return h[h.length-1]}
+function bid(k){return mid(k)-PAIRS[k].pip*SPREAD/2}
+function ask(k){return mid(k)+PAIRS[k].pip*SPREAD/2}
+function fmt(k,v){return v.toFixed(PAIRS[k].d)}
+function money(v){return (v<0?"-":"")+"$"+Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+function pipVal(k){var q=k.split("/")[1];return q==="USD"?10:PAIRS[k].pip*100000/mid("USD/"+q)}
+function pnl(t){var pp=PAIRS[t.pair].pip,pips=t.side==="buy"?(bid(t.pair)-t.entry)/pp:(t.entry-ask(t.pair))/pp;return{pips:pips,usd:pips*pipVal(t.pair)*t.lots}}
+function margin(l){return l*1000}
+function lotsVal(){var v=parseFloat($("lots").value);return isNaN(v)?0:Math.min(5,Math.max(0,v))}
+function say(t){$("msg").textContent=t;clearTimeout(say.h);if(t)say.h=setTimeout(function(){$("msg").textContent=""},6000)}
+function trade(side){
+  if(FEED_URL&&target[pairSel]===undefined){say("Waiting for the live price. Try again in a moment.");return}
+  var l=lotsVal();if(l<.01){say("Enter a lot size of at least 0.01.");return}
+  var used=open.reduce(function(a,t){return a+margin(t.lots)},0);
+  if(equity()-used<margin(l)){say("Not enough free margin. Lower the lot size or close a trade.");return}
+  var k=pairSel,pp=PAIRS[k].pip,s=parseFloat($("sl").value),t=parseFloat($("tp").value),px=parseFloat($("pr").value);
+  if(px>0){var cur=side==="buy"?ask(k):bid(k);
+    if(Math.abs(px-cur)<pp){say("Entry price is too close to the current price. Leave it blank for a market order.");return}
+    pend.push({id:nid++,pair:k,side:side,lots:l,price:px,ge:px>cur,s:s>0?s:0,t:t>0?t:0});say("Pending order placed. It fills when the price reaches it.");save();render();return}
+  fill(k,side,l,s,t);say("");render();
+}
+function fill(k,side,l,s,t){var pp=PAIRS[k].pip,e=side==="buy"?ask(k):bid(k),dir=side==="buy"?1:-1;
+  open.push({id:nid++,pair:k,side:side,lots:l,entry:e,sl:s>0?e-dir*s*pp:null,tp:t>0?e+dir*t*pp:null});save()}
+function close(id,why){
+  var i=open.findIndex(function(t){return t.id===id});if(i<0)return;
+  var t=open.splice(i,1)[0],r=pnl(t);bal+=r.usd;
+  save();closed.unshift({pair:t.pair,side:t.side,lots:t.lots,pips:r.pips,usd:r.usd,why:why||"Closed by you"});
+}
+function equity(){return bal+open.reduce(function(a,t){return a+pnl(t).usd},0)}
+function toast(t){var e=$("toast");e.textContent=t;e.style.display="block";clearTimeout(toast.h);toast.h=setTimeout(function(){e.style.display="none"},4500)}
+async function exportCsv(){
+  var txt=["pair,side,lots,pips,profit_usd,result"].concat(closed.map(function(t){return [t.pair,t.side,t.lots,t.pips.toFixed(1),t.usd.toFixed(2),t.why].join(",")})).join("\n");
+  try{
+    if(typeof claude!=="undefined"){var dl=await claude.use("downloads");if(dl){await dl.save({filename:"forex-practice-trades.csv",data:txt});return}}
+    var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([txt],{type:"text/csv"}));a.download="forex-practice-trades.csv";document.body.appendChild(a);a.click();a.remove();
+  }catch(e){if(!e||e.code!=="declined")toast("Couldn't export the file.")}
+}
+function tick(){
+  Object.keys(PAIRS).forEach(function(k){var h=hist[k],pp=PAIRS[k].pip,m=h[h.length-1];
+    if(FEED_URL){if(target[k]===undefined)return;m+=(target[k]-m)*.3}else m+=(Math.random()+Math.random()+Math.random()-1.5)*pp*1.6;h.push(m);if(h.length>3000)h.shift()});
+  alerts.slice().forEach(function(a){if(FEED_URL&&target[a.pair]===undefined)return;var m=mid(a.pair);if(a.ge?m>=a.price:m<=a.price){alerts.splice(alerts.indexOf(a),1);toolsDirty=true;toast("Alert: "+a.pair+" reached "+fmt(a.pair,a.price));try{navigator.vibrate&&navigator.vibrate(200)}catch(e){}save()}});
+  pend.slice().forEach(function(o){if(FEED_URL&&target[o.pair]===undefined)return;var hit=o.side==="buy"?(o.ge?ask(o.pair)>=o.price:ask(o.pair)<=o.price):(o.ge?bid(o.pair)>=o.price:bid(o.pair)<=o.price);
+    if(!hit)return;pend.splice(pend.indexOf(o),1);
+    var u=open.reduce(function(a,t){return a+margin(t.lots)},0);
+    if(equity()-u<margin(o.lots)){say("A pending order was cancelled: not enough free margin.");save();return}
+    fill(o.pair,o.side,o.lots,o.s,o.t);toast("Pending order filled on "+o.pair+".")});
+  open.slice().forEach(function(t){if(FEED_URL&&target[t.pair]===undefined)return;var b=bid(t.pair),a=ask(t.pair);
+    if(t.tr&&t.sl!==null){if(t.side==="buy"){var n1=b-t.td;if(n1>t.sl)t.sl=n1}else{var n2=a+t.td;if(n2<t.sl)t.sl=n2}}
+    if(t.side==="buy"){if(t.sl!==null&&b<=t.sl)close(t.id,"Stop-loss hit");else if(t.tp!==null&&b>=t.tp)close(t.id,"Take-profit hit")}
+    else{if(t.sl!==null&&a>=t.sl)close(t.id,"Stop-loss hit");else if(t.tp!==null&&a<=t.tp)close(t.id,"Take-profit hit")}});
+  var mu=open.reduce(function(a,t){return a+margin(t.lots)},0);
+  if(mu&&equity()/mu<.5&&!(FEED_URL&&open.some(function(t){return target[t.pair]===undefined}))){open.slice().forEach(function(t){close(t.id,"Margin stop-out")});say("Stop-out: margin level fell below 50%, so all trades were closed.")}
+  render();
+}
+function render(){
+  var k=pairSel,o=open.reduce(function(a,t){return a+pnl(t).usd},0);
+  $("bal").textContent=money(bal);$("eq").textContent=money(bal+o);
+  $("pl").textContent=money(o);$("pl").className=o>=0?"up":"down";
+  $("mid").textContent=fmt(k,mid(k));
+  var ch=(mid(k)-start[k])/PAIRS[k].pip;$("chg").textContent=(ch>=0?"+":"")+ch.toFixed(1)+" pips";$("chg").className=ch>=0?"up":"down";
+  $("bid").textContent=fmt(k,bid(k));$("ask").textContent=fmt(k,ask(k));
+  $("mg").value=money(margin(lotsVal()));
+  var mu=open.reduce(function(a,t){return a+margin(t.lots)},0),E=bal+o;
+  $("mu").textContent=money(mu);$("fm").textContent=money(E-mu);$("ml").textContent=mu?Math.round(E/mu*100)+"%":"–";
+  $("rsi").textContent="RSI "+Math.round(rsi(k));
+  draw();panel();
+}
+var TF=67,editId=null,smaOn=true,toolsDirty=true,resetArm=false;
+function candles(k){var d=hist[k],out=[];for(var e=d.length;e>0&&out.length<70;e-=TF){var g=d.slice(Math.max(0,e-TF),e);out.unshift({o:g[0],c:g[g.length-1],h:Math.max.apply(0,g),l:Math.min.apply(0,g)})}return out}
+function draw(){
+  var c=$("c"),r=window.devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;
+  if(c.width!==w*r){c.width=w*r;c.height=h*r}
+  var x=c.getContext("2d");x.setTransform(r,0,0,r,0,0);x.clearRect(0,0,w,h);
+  var all=candles(pairSel),cs=all.slice(-48),pp=PAIRS[pairSel].pip,mn=Math.min.apply(0,cs.map(function(q){return q.l}))-pp*2,mx=Math.max.apply(0,cs.map(function(q){return q.h}))+pp*2;
+  var Y=function(v){return h-(v-mn)/(mx-mn)*h},st=getComputedStyle(document.documentElement),up=st.getPropertyValue("--up").trim()||"#14936b",dn=st.getPropertyValue("--down").trim()||"#d03b4f",bw=w/48;
+  cs.forEach(function(q,i){var X=(48-cs.length+i)*bw+bw/2,col=q.c>=q.o?up:dn;
+    x.strokeStyle=col;x.fillStyle=col;x.lineWidth=1;x.beginPath();x.moveTo(X,Y(q.h));x.lineTo(X,Y(q.l));x.stroke();
+    var t=Y(Math.max(q.o,q.c)),b=Y(Math.min(q.o,q.c));x.fillRect(X-bw*.35,t,bw*.7,Math.max(1.5,b-t))});
+  if(smaOn){x.beginPath();var go=false;cs.forEach(function(q,i){var gi=all.length-cs.length+i;if(gi<19)return;var m=0;for(var j=gi-19;j<=gi;j++)m+=all[j].c;m/=20;var X=(48-cs.length+i)*bw+bw/2;go?x.lineTo(X,Y(m)):x.moveTo(X,Y(m));go=true});x.strokeStyle=st.getPropertyValue("--buy").trim()||"#1f6feb";x.lineWidth=1.5;x.stroke()}
+  var last=mid(pairSel);x.setLineDash([2,3]);x.strokeStyle=st.getPropertyValue("--mute").trim()||"#888";x.beginPath();x.moveTo(0,Y(last));x.lineTo(w,Y(last));x.stroke();x.setLineDash([]);
+  open.filter(function(t){return t.pair===pairSel}).forEach(function(t){
+    [[t.entry,"#888"],[t.sl,"#d03b4f"],[t.tp,"#14936b"]].forEach(function(l){if(l[0]===null||l[0]<mn||l[0]>mx)return;
+      x.beginPath();x.setLineDash([5,4]);x.moveTo(0,Y(l[0]));x.lineTo(w,Y(l[0]));x.strokeStyle=l[1];x.lineWidth=1;x.stroke();x.setLineDash([])})});
+  pend.filter(function(o){return o.pair===pairSel&&o.price>=mn&&o.price<=mx}).forEach(function(o){x.beginPath();x.setLineDash([2,4]);x.moveTo(0,Y(o.price));x.lineTo(w,Y(o.price));x.strokeStyle="#e4761b";x.lineWidth=1.5;x.stroke();x.setLineDash([])});
+  lines.filter(function(o){return o.pair===pairSel&&o.price>=mn&&o.price<=mx}).forEach(function(o){x.beginPath();x.moveTo(0,Y(o.price));x.lineTo(w,Y(o.price));x.strokeStyle=st.getPropertyValue("--mute").trim()||"#888";x.lineWidth=1;x.stroke()});
+}
+function rsi(k){var a=candles(k),g=0,l=0,n=Math.min(14,a.length-1);if(n<2)return 50;for(var i=a.length-n;i<a.length;i++){var d=a[i].c-a[i-1].c;if(d>0)g+=d;else l-=d}return l===0?100:100-100/(1+g/l)}
+function editForm(t){var pp=PAIRS[t.pair].pip;return '<div class="ed"><div><label>Stop-loss (pips from entry)</label><input id="es" type="number" min="1" inputmode="numeric" value="'+(t.sl!==null?Math.round(Math.abs(t.entry-t.sl)/pp):"")+'"></div><div><label>Take-profit (pips from entry)</label><input id="et" type="number" min="1" inputmode="numeric" value="'+(t.tp!==null?Math.round(Math.abs(t.tp-t.entry)/pp):"")+'"></div><label style="grid-column:1/3"><input type="checkbox" id="etr" style="width:auto" '+(t.tr?"checked":"")+'> Trailing stop (follows the price at the stop-loss distance)</label><button data-es="'+t.id+'">Save</button><button data-ec="1">Cancel</button></div>'}
+function panel(force){
+  var p=$("panel"),h="";
+  if(editId!==null&&!open.some(function(t){return t.id===editId}))editId=null;
+  if(!force&&tab==="open"&&editId!==null)return;
+  if(tab==="open"){
+    if(!open.length)h='<p class="empty">No open trades. Pick Buy if you expect the price to rise, Sell if you expect it to fall.</p>';
+    open.forEach(function(t){var r=pnl(t);h+='<div class="pos"><div><b>'+t.side.toUpperCase()+" "+t.pair+'</b><small>'+t.lots.toFixed(2)+" lots at "+fmt(t.pair,t.entry)+'</small></div><div style="text-align:right"><b class="'+(r.usd>=0?"up":"down")+'">'+money(r.usd)+'</b><small>'+r.pips.toFixed(1)+' pips</small></div><div class="bt"><button data-e="'+t.id+'">Edit</button><button data-c="'+t.id+'">Close</button></div></div>'+(editId===t.id?editForm(t):"")});
+    if(open.length>1)h+='<button class="closeall" data-all="1">Close all trades</button>';
+    if(pend.length){h+='<p class="empty" style="margin-top:10px">Pending orders</p>';pend.forEach(function(o){h+='<div class="pos"><div><b>'+o.side.toUpperCase()+' '+((o.side==="buy")===o.ge?"STOP":"LIMIT")+' '+o.pair+'</b><small>'+o.lots.toFixed(2)+' lots at '+fmt(o.pair,o.price)+'</small></div><button data-x="'+o.id+'">Cancel</button></div>'})}
+  }else if(tab==="hist"){
+    if(!closed.length)h='<p class="empty">Closed trades will appear here.</p>';else h='<p class="empty">Win rate '+Math.round(closed.filter(function(t){return t.usd>0}).length/closed.length*100)+'% · '+closed.length+' trades</p>';
+    closed.slice(0,30).forEach(function(t){h+='<div class="pos"><div><b>'+t.side.toUpperCase()+" "+t.pair+'</b><small>'+t.lots.toFixed(2)+" lots · "+t.why+'</small></div><div style="text-align:right"><b class="'+(t.usd>=0?"up":"down")+'">'+money(t.usd)+'</b><small>'+t.pips.toFixed(1)+' pips</small></div></div>'});
+  }else if(tab==="tools"){
+    if(p.dataset.k==="tools"&&!toolsDirty)return;toolsDirty=false;
+    h='<label for="ap">Price alert for '+pairSel+'</label><div class="ed"><input id="ap" type="number" step="any" inputmode="decimal" placeholder="Price"><button data-al="1">Set alert</button></div>';
+    alerts.forEach(function(a){h+='<div class="pos"><div><b>'+a.pair+'</b><small>Alert at '+fmt(a.pair,a.price)+'</small></div><button data-ad="'+a.id+'">Remove</button></div>'});
+    h+='<label for="hp" style="margin-top:8px">Horizontal line on '+pairSel+'</label><div class="ed"><input id="hp" type="number" step="any" inputmode="decimal" placeholder="Price"><button data-hl="1">Add line</button></div>';
+    lines.forEach(function(a){h+='<div class="pos"><div><b>'+a.pair+'</b><small>Line at '+fmt(a.pair,a.price)+'</small></div><button data-hd="'+a.id+'">Remove</button></div>'});
+    h+='<div class="ed" style="padding-top:10px"><button data-ex
